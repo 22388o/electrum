@@ -383,7 +383,7 @@ class ChannelsList(MyTreeView):
         vbox.addLayout(Buttons(OkButton(d)))
         d.exec_()
 
-    def new_channel_dialog(self):
+    def new_channel_dialog(self, *, amount_sat=None):
         lnworker = self.parent.wallet.lnworker
         d = WindowModalDialog(self.parent, _('Open Channel'))
         vbox = QVBoxLayout(d)
@@ -413,6 +413,7 @@ class ChannelsList(MyTreeView):
             trampoline_combo.setCurrentIndex(1)
 
         amount_e = BTCAmountEdit(self.parent.get_decimal_point)
+        amount_e.setAmount(amount_sat)
         # max button
         def spend_max():
             amount_e.setFrozen(max_button.isChecked())

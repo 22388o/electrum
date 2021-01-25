@@ -66,7 +66,7 @@ from electrum.util import (format_time,
                            AddTransactionException, BITCOIN_BIP21_URI_SCHEME,
                            InvoiceError, parse_max_spend)
 from electrum.invoices import PR_DEFAULT_EXPIRATION_WHEN_CREATING, Invoice
-from electrum.invoices import PR_PAID, PR_FAILED, pr_expiration_values, Invoice
+from electrum.invoices import PR_PAID, PR_FAILED, PR_SCHEDULED, pr_expiration_values, Invoice
 from electrum.transaction import (Transaction, PartialTxInput,
                                   PartialTransaction, PartialTxOutput)
 from electrum.wallet import (Multisig_Wallet, CannotBumpFee, Abstract_Wallet,
@@ -1622,17 +1622,45 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
 
         return False  # no errors
 
-    def pay_lightning_invoice(self, invoice: str, *, amount_msat: Optional[int]):
+    def pay_lightning_invoice(self, invoice: Invoice):
+        amount_msat = invoice.get_amount_msat()
+        key = self.wallet.get_key_for_outgoing_invoice(invoice)
         if amount_msat is None:
             raise Exception("missing amount for LN invoice")
         amount_sat = Decimal(amount_msat) / 1000
+        if amount_sat > self.wallet.lnworker.num_sats_can_send():
+            funding_sat = amount_sat + 100000 # fixme
+            onchain_fees = 1000 # fixme
+            c, u, x = self.wallet.get_balance()
+            if invoice.get_address() and c + u >= amount_sat + onchain_fees:
+                msg = ''.join([
+                    _('You currently do not have the capacity to send that amount on the Lightning network.'), '\n\n',
+                    _('Do you want to pay this invoice onchain?'),
+                ])
+                if self.question(msg):
+                    self.save_pending_invoice()
+                    self.pay_onchain_dialog(self.get_coins(), invoice.get_outputs())
+                return
+            elif c + u >= funding_sat:
+                msg = ''.join([
+                    _('You currently do not have the capacity to send that amount on the Lightning network.'), '\n\n',
+                    _('Do you want to open a new channel?'), ' ',
+                    _('Your payment will be scheduled for when the channel is open.')
+                ])
+                if self.question(msg):
+                    self.save_pending_invoice()
+                    self.channels_list.new_channel_dialog(amount_sat=funding_sat)
+                    self.wallet.lnworker.set_invoice_status(key, PR_SCHEDULED)
+                return
+            else:
+                raise NotEnoughFunds()
         # FIXME this is currently lying to user as we truncate to satoshis
         msg = _("Pay lightning invoice?") + '\n\n' + _("This will send {}?").format(self.format_amount_and_units(amount_sat))
         if not self.question(msg):
             return
         self.save_pending_invoice()
         def task():
-            coro = self.wallet.lnworker.pay_invoice(invoice, amount_msat=amount_msat, attempts=LN_NUM_PAYMENT_ATTEMPTS)
+            coro = self.wallet.lnworker.pay_invoice(invoice.lightning_invoice, amount_msat=amount_msat, attempts=LN_NUM_PAYMENT_ATTEMPTS)
             fut = asyncio.run_coroutine_threadsafe(coro, self.network.asyncio_loop)
             return fut.result()
         self.wallet.thread.add(task)
@@ -1735,7 +1763,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
 
     def do_pay_invoice(self, invoice: 'Invoice'):
         if invoice.is_lightning():
-            self.pay_lightning_invoice(invoice.lightning_invoice, amount_msat=invoice.get_amount_msat())
+            self.pay_lightning_invoice(invoice)
         else:
             self.pay_onchain_dialog(self.get_coins(), invoice.outputs)
 
