@@ -150,6 +150,7 @@ class Invoice(StoredObject):
 
     def get_amount_sat(self) -> Union[int, str]:
         """Returns a decimal satoshi amount, or '!' or None."""
+        # fixme: this should not return Decimal
         amount_msat = self.amount_msat
         if amount_msat is None:
             return None

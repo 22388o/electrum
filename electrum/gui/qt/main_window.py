@@ -1072,15 +1072,25 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         d = LightningTxDialog(self, tx_item)
         d.show()
 
-    def toggle_receive_qr(self):
+    def toggle_receive_qr(self, toggle=False):
         b = not self.config.get('receive_qr_visible', False)
+        self.config.set_key('receive_qr_visible', b)
+        self.update_receive_widgets()
+
+    def update_receive_widgets(self):
+        b = self.config.get('receive_qr_visible', False)
         self.receive_address_e.setVisible(b)
         self.receive_address_qr.setVisible(not b)
         self.receive_URI_e.setVisible(b)
         self.receive_URI_qr.setVisible(not b)
-        self.receive_lightning_e.setVisible(b)
-        self.receive_lightning_qr.setVisible(not b)
-        self.config.set_key('receive_qr_visible', b)
+        if str(self.receive_lightning_e.text()):
+            self.receive_lightning_swap.setVisible(False)
+            self.receive_lightning_e.setVisible(b)
+            self.receive_lightning_qr.setVisible(not b)
+        else:
+            self.receive_lightning_swap.setVisible(True)
+            self.receive_lightning_e.setVisible(False)
+            self.receive_lightning_qr.setVisible(False)
 
     def create_receive_tab(self):
         # A 4-column grid layout.  All the stretch is in the last column.
@@ -1150,6 +1160,14 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         self.receive_address_e = ButtonsTextEdit()
         self.receive_URI_e = ButtonsTextEdit()
         self.receive_lightning_e = ButtonsTextEdit()
+        self.receive_lightning_swap = QWidget()
+        vbox = QVBoxLayout()
+        vbox.addWidget(WWLabel('You do not have the capacity to receive this amount using Lightning. You may create a lightning invoice that uses a submarine swap'))
+        self.swap_to_receive_button = QPushButton('Create swap invoice')
+        self.swap_to_receive_button.pressed.connect(self.swap_to_receive_dialog)
+        vbox.addWidget(self.swap_to_receive_button)
+        self.receive_lightning_swap.setLayout(vbox)
+        self.receive_lightning_swap.setVisible(False)
         #self.receive_URI_e.setFocusPolicy(Qt.ClickFocus)
 
         fixedSize = 200
@@ -1165,8 +1183,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         self.receive_URI_qr = QRCodeWidget(fixedSize=fixedSize)
         self.receive_lightning_qr = QRCodeWidget(fixedSize=fixedSize)
 
-        self.toggle_receive_qr()
-        self.toggle_receive_qr()
+        self.receive_lightning_e.textChanged.connect(self.update_receive_widgets)
 
         receive_address_layout = QHBoxLayout()
         receive_address_layout.addWidget(self.receive_address_e)
@@ -1177,6 +1194,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         receive_lightning_layout = QHBoxLayout()
         receive_lightning_layout.addWidget(self.receive_lightning_e)
         receive_lightning_layout.addWidget(self.receive_lightning_qr)
+        receive_lightning_layout.addWidget(self.receive_lightning_swap)
 
         from .util import VTabWidget
         self.receive_tabs = VTabWidget()
@@ -1233,10 +1251,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
     def show_receive_request(self, req):
         addr = req.get_address() or ''
         URI = req.get_bip21_URI() if addr else ''
-        lnaddr = req.lightning_invoice or ''
         can_receive = req.get_amount_sat() <= self.wallet.lnworker.num_sats_can_receive()
-        if not can_receive:
-            lnaddr = ''
+        lnaddr = (req.lightning_invoice or '') if can_receive else (req.swap_invoice or '')
         icon_name = "lightning.png" if can_receive else "lightning_disconnected.png"
         self.receive_tabs.setTabIcon(2, read_QIcon(icon_name))
         # encode lightning invoices as uppercase so QR encoding can use
@@ -1299,6 +1315,12 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
                 else:
                     return
 
+    def swap_to_receive_dialog(self):
+        from .swap_dialog import SwapToReceiveDialog
+        addr = self.receive_address_e.text()
+        d = SwapToReceiveDialog(self, addr)
+        d.run()
+
     def create_invoice(self):
         amount_sat = self.receive_amount_e.get_amount()
         message = self.receive_message_e.text()
@@ -1313,11 +1335,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
             if not address:
                 return
             self.address_list.update()
-
-        if self.wallet.has_lightning():
-            lightning = True
-        else:
-            lightning = False
+        # generate even if we cannot receive
+        lightning = self.wallet.has_lightning()
         try:
             key = self.wallet.create_request(amount_sat, message, expiry, address, lightning=lightning)
         except InvoiceError as e:

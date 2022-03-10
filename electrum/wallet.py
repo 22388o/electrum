@@ -2267,6 +2267,16 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
                 status = self.get_request_status(addr)
                 util.trigger_callback('request_status', self, addr, status)
 
+    async def create_swap_request(self, addr, lightning_amount_sat, expected_onchain_amount_sat):
+        # - store the amount
+        # - they pay the fee
+        # - if we pay the fee, we need to modify the expected amount in the request
+        sm = self.lnworker.swap_manager
+        invoice, fee_invoice = await sm.create_reverse_swap(lightning_amount_sat, expected_onchain_amount_sat, addr)
+        assert fee_invoice is None # not supported
+        self.receive_requests[addr].swap_invoice = invoice
+        self.save_db()
+
     def create_request(self, amount_sat: int, message: str, exp_delay: int, address: str, lightning: bool):
         # for receiving
         amount_sat = amount_sat or 0

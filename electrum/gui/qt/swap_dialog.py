@@ -293,3 +293,58 @@ class SwapDialog(WindowModalDialog):
             toType=onchain_funds if self.is_reverse else lightning_funds,
             capacityType="receiving" if self.is_reverse else "sending",
         )
+
+
+
+class SwapToReceiveDialog(WindowModalDialog):
+
+    tx: Optional[PartialTransaction]
+    update_amount_signal = pyqtSignal()
+    update_requests_signal = pyqtSignal()
+
+    def __init__(self, window: 'ElectrumWindow', addr):
+        WindowModalDialog.__init__(self, window, _('Swap to receive'))
+        self.window = window
+        self.wallet = window.wallet
+        self.receive_address = addr
+        self.sm = self.wallet.lnworker.swap_manager
+        req = self.wallet.receive_requests[addr]
+        self.invoice_amount_sat = req.get_amount_sat()
+        vbox = QVBoxLayout(self)
+        vbox.addWidget(QLabel(_('Creat swap invoice?') + ':'))
+        grid = QGridLayout()
+        self.invoice_amount_label = QLabel('')
+        self.receive_amount_label = QLabel('')
+        grid.addWidget(QLabel(_("Invoice amount")), 0, 0)
+        grid.addWidget(self.invoice_amount_label, 0, 1)
+        grid.addWidget(QLabel(_("You receive")), 1, 0)
+        grid.addWidget(self.receive_amount_label, 1, 1)
+        vbox.addLayout(grid)
+        self.ok_button = OkButton(self)
+        self.ok_button.setEnabled(False)
+        vbox.addLayout(Buttons(CancelButton(self), self.ok_button))
+        #receive_amount_sat = None
+        self.send_amount_sat = None
+        self.update_amount_signal.connect(self.update_amount)
+        self.update_requests_signal.connect(self.update_requests)
+
+    def update_amount(self):
+        #receive_amount_sat = self.sm.get_recv_amount(invoice_amount_sat, is_reverse=True)
+        self.send_amount_sat = self.sm.get_send_amount(self.invoice_amount_sat, is_reverse=True)
+        self.invoice_amount_label.setText(self.window.format_amount_and_units(self.send_amount_sat))
+        self.receive_amount_label.setText(self.window.format_amount_and_units(self.invoice_amount_sat))
+        self.ok_button.setEnabled(True)
+
+    def update_requests(self):
+        req = self.wallet.receive_requests[self.receive_address]
+        self.window.receive_lightning_e.setText(req.swap_invoice)
+        self.window.receive_lightning_qr.setData(req.swap_invoice.upper())
+        self.window.update_receive_widgets()
+
+    def run(self):
+        self.window.run_coroutine_from_thread(self.sm.get_pairs(), lambda x: self.update_amount_signal.emit())
+        if not self.exec_():
+            return
+        assert self.send_amount_sat is not None
+        coro = self.wallet.create_swap_request(self.receive_address, self.send_amount_sat, self.invoice_amount_sat)
+        self.window.run_coroutine_from_thread(coro, lambda x: self.update_requests_signal.emit())
