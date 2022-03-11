@@ -1734,8 +1734,8 @@ class LNWallet(LNWorker):
         route[-1].node_features |= invoice_features
         return route
 
-    def add_request(self, amount_sat, message, expiry) -> str:
-        coro = self._add_request_coro(amount_sat, message, expiry)
+    def add_request(self, amount_sat, message, expiry, fallback_address) -> str:
+        coro = self._add_request_coro(amount_sat, message, expiry, fallback_address)
         fut = asyncio.run_coroutine_threadsafe(coro, self.network.asyncio_loop)
         try:
             return fut.result(timeout=5)
@@ -1748,6 +1748,7 @@ class LNWallet(LNWorker):
             amount_msat: Optional[int],
             message: str,
             expiry: int,
+            fallback_address: str,
             write_to_disk: bool = True,
     ) -> Tuple[LnAddr, str]:
 
@@ -1777,7 +1778,9 @@ class LNWallet(LNWorker):
                 ('d', message),
                 ('c', MIN_FINAL_CLTV_EXPIRY_FOR_INVOICE),
                 ('x', expiry),
-                ('9', invoice_features)]
+                ('9', invoice_features),
+                ('f', fallback_address),
+            ]
             + routing_hints
             + trampoline_hints,
             date=timestamp,
@@ -1789,7 +1792,7 @@ class LNWallet(LNWorker):
             self.wallet.save_db()
         return lnaddr, invoice
 
-    async def _add_request_coro(self, amount_sat: Optional[int], message, expiry: int) -> str:
+    async def _add_request_coro(self, amount_sat: Optional[int], message, expiry: int, fallback_address: str) -> str:
         # passed expiry is relative, it is absolute in the lightning invoice
         amount_msat = amount_sat * 1000 if amount_sat is not None else None
         timestamp = int(time.time())
@@ -1797,20 +1800,10 @@ class LNWallet(LNWorker):
             amount_msat=amount_msat,
             message=message,
             expiry=expiry,
+            fallback_address=fallback_address,
             write_to_disk=False,
         )
-        req = self.wallet.make_payment_request(
-            amount_sat,
-            message,
-            timestamp,
-            expiry,
-            address=None,
-            lightning_invoice=invoice
-        )
-        key = self.wallet.add_payment_request(req, write_to_disk=False)
-        self.wallet.set_label(key, message)
-        self.wallet.save_db()
-        return key
+        return invoice
 
     def save_preimage(self, payment_hash: bytes, preimage: bytes, *, write_to_disk: bool = True):
         assert sha256(preimage) == payment_hash
