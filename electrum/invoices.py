@@ -108,6 +108,7 @@ class Invoice(StoredObject):
     swap_invoice = attr.ib(type=str, kw_only=True) # only for receiving
 
     __lnaddr = None
+    __swap_lnaddr = None
 
     def is_lightning(self):
         return self.lightning_invoice is not None
@@ -185,6 +186,17 @@ class Invoice(StoredObject):
         if self.__lnaddr is None:
             self.__lnaddr = lndecode(self.lightning_invoice)
         return self.__lnaddr
+
+    def get_swap_invoice(self):
+        if self.swap_invoice:
+            if self.__swap_lnaddr is None:
+                self.__swap_lnaddr = lndecode(self.swap_invoice)
+            if not self.__swap_lnaddr.is_expired():
+                return self.swap_invoice
+
+    def set_swap_invoice(self, invoice:str):
+        self.swap_invoice = invoice
+        self.__swap_lnaddr = None
 
     @property
     def rhash(self) -> str:
