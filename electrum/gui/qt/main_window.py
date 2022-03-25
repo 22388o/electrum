@@ -1252,9 +1252,11 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
 
     def show_receive_request(self, req):
         addr = req.get_address() or ''
-        URI = req.get_bip21_URI() if addr else ''
         can_receive = req.get_amount_sat() <= self.wallet.lnworker.num_sats_can_receive()
-        lnaddr = (req.lightning_invoice or '') if can_receive else (req.get_swap_invoice() or '')
+        lnaddr = req.lightning_invoice if can_receive else req.get_swap_invoice()
+        bip21_lightning = lnaddr if self.config.get('bip21_lightning', False) else None
+        URI = req.get_bip21_URI(lightning=bip21_lightning)
+        lnaddr = lnaddr or ''
         icon_name = "lightning.png" if can_receive else "lightning_disconnected.png"
         self.receive_tabs.setTabIcon(2, read_QIcon(icon_name))
         # encode lightning invoices as uppercase so QR encoding can use
